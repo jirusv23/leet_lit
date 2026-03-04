@@ -1,43 +1,254 @@
 import Phaser from 'phaser';
 
-// 1. Define your Scene as a Class
+const WORLD_SIZE = 400000;
+const SHIP_SIZE = 20;
+const STATION_SIZE = 150;
+
 class GameScene extends Phaser.Scene {
-    private logo!: Phaser.Types.Physics.Arcade.ImageWithDynamicBody;
+    private ship!: Phaser.GameObjects.Container;
+    private shipGraphics!: Phaser.GameObjects.Graphics;
+    private stars: { graphics: Phaser.GameObjects.Graphics, factor: number }[] = [];
+    private keyW!: Phaser.Input.Keyboard.Key;
+    private keyS!: Phaser.Input.Keyboard.Key;
+    private keyN!: Phaser.Input.Keyboard.Key;
+    
+    // Physics variables
+    private velocity = new Phaser.Math.Vector2(0, 0);
+    private throttle = 0; 
+    private rotationInertia = 0.15;
+    private baseAcceleration = 4;
+    
+    // UI Elements (Now managed by a separate camera)
+    private uiCamera!: Phaser.Cameras.Scene2D.Camera;
+    private speedText!: Phaser.GameObjects.Text;
+    private distText!: Phaser.GameObjects.Text;
+    private hintText!: Phaser.GameObjects.Text;
+    private navArrow!: Phaser.GameObjects.Graphics;
+    
+    private targetStation?: Phaser.GameObjects.Container;
+    private stations: Phaser.GameObjects.Container[] = [];
+    private targetIndex = 0;
 
     constructor() {
         super('GameScene');
     }
 
-    preload() {
-        this.load.setBaseURL('https://labs.phaser.io');
-        this.load.image('logo', 'assets/sprites/phaser3-logo.png');
-    }
-
     create() {
-        // TypeScript knows exactly what 'logo' is now
-        this.logo = this.physics.add.image(400, 100, 'logo');
-        this.logo.setVelocity(100, 200);
-        this.logo.setBounce(1, 1);
-        this.logo.setCollideWorldBounds(true);
+        this.cameras.main.setBackgroundColor('#ffffff');
+        this.physics.world.setBounds(-WORLD_SIZE, -WORLD_SIZE, WORLD_SIZE * 2, WORLD_SIZE * 2);
+
+        this.createStars();
+        this.createStations(15);
+        this.createShip();
+
+        // 1. Setup Main Camera for World
+        // We use a high lerp to keep it centered
+        this.cameras.main.startFollow(this.ship, true, 1, 1);
+        this.cameras.main.setFollowOffset(0, 0);
+
+        // 2. Setup UI Camera
+        // This camera will NOT zoom and will only render UI elements
+        this.uiCamera = this.cameras.add(0, 0, window.innerWidth, window.innerHeight).setScroll(0, 0).setName('UI');
+        
+        // Create UI elements
+        this.speedText = this.add.text(30, 30, '', { color: '#000', fontSize: '24px', fontStyle: 'bold' });
+        this.distText = this.add.text(30, 90, '', { color: '#000', fontSize: '20px' });
+        this.hintText = this.add.text(30, window.innerHeight - 50, 'W/S: THROTTLE | MOUSE: AIM | N: NEXT STATION', { color: '#000', fontSize: '16px' });
+        
+        // The Nav Arrow is tricky: it needs to point based on world coords but stay fixed size.
+        // We'll keep it in the world but scale its thickness/size manually to counteract zoom.
+        this.navArrow = this.add.graphics().setDepth(10);
+
+        // Tell cameras what to ignore
+        // Main camera ignores UI text
+        this.cameras.main.ignore([this.speedText, this.distText, this.hintText]);
+        // UI camera ignores EVERYTHING except UI text
+        this.uiCamera.ignore([this.ship, this.navArrow, ...this.stations, ...this.stars.map(s => s.graphics)]);
+
+        if (this.input.keyboard) {
+            this.keyW = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
+            this.keyS = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S);
+            this.keyN = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.N);
+        }
     }
 
-    update() {
-        // Example: Rotating the logo every frame
-        this.logo.rotation += 0.01;
+    private createStars() {
+        const layers = 3;
+        const starCounts = [800, 400, 200];
+        for (let i = 0; i < layers; i++) {
+            const graphics = this.add.graphics();
+            graphics.fillStyle(0x000000, 0.6);
+            const factor = (i + 1) * 0.15;
+            
+            for (let j = 0; j < starCounts[i]; j++) {
+                const x = Phaser.Math.Between(-WORLD_SIZE / 2, WORLD_SIZE / 2);
+                const y = Phaser.Math.Between(-WORLD_SIZE / 2, WORLD_SIZE / 2);
+                graphics.fillCircle(x, y, 1 + i);
+            }
+            graphics.setScrollFactor(factor);
+            this.stars.push({ graphics, factor });
+        }
+    }
+
+    private createStations(count: number) {
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 8000 + Math.random() * (WORLD_SIZE / 4);
+            const x = Math.cos(angle) * dist;
+            const y = Math.sin(angle) * dist;
+            
+            const station = this.add.container(x, y);
+            const graphics = this.add.graphics();
+            graphics.lineStyle(4, 0x000000);
+            
+            const points = [];
+            const sides = 8;
+            for (let s = 0; s < sides; s++) {
+                const a = (s / sides) * Math.PI * 2;
+                const r = s % 2 === 0 ? STATION_SIZE : STATION_SIZE * 0.8;
+                points.push(new Phaser.Math.Vector2(Math.cos(a) * r, Math.sin(a) * r));
+            }
+            graphics.strokePoints(points, true);
+            station.add(graphics);
+            
+            const label = this.add.text(0, STATION_SIZE + 20, `SECTOR ${i + 1}`, { color: '#000', fontSize: '18px', fontStyle: 'bold' }).setOrigin(0.5);
+            station.add(label);
+            
+            this.stations.push(station);
+        }
+        this.targetIndex = 0;
+        this.targetStation = this.stations[this.targetIndex];
+    }
+
+    private createShip() {
+        this.ship = this.add.container(0, 0);
+        this.shipGraphics = this.add.graphics();
+        this.shipGraphics.lineStyle(3, 0x000000);
+        
+        const points = [
+            new Phaser.Math.Vector2(SHIP_SIZE * 1.5, 0),
+            new Phaser.Math.Vector2(-SHIP_SIZE, SHIP_SIZE),
+            new Phaser.Math.Vector2(-SHIP_SIZE, -SHIP_SIZE)
+        ];
+        this.shipGraphics.strokePoints(points, true);
+        this.ship.add(this.shipGraphics);
+    }
+
+    update(time: number, delta: number) {
+        const dt = Math.min(delta, 32) / 16.6;
+
+        this.handleInput(dt);
+        this.applyPhysics(dt);
+        this.updateCamera(dt);
+        this.updateUI();
+    }
+
+    private handleInput(dt: number) {
+        const mouseWorld = this.cameras.main.getWorldPoint(this.input.x, this.input.y);
+        const targetAngle = Phaser.Math.Angle.Between(this.ship.x, this.ship.y, mouseWorld.x, mouseWorld.y);
+        
+        this.ship.rotation = Phaser.Math.Angle.RotateTo(
+            this.ship.rotation,
+            targetAngle,
+            this.rotationInertia * dt
+        );
+
+        if (this.keyW.isDown) {
+            this.throttle = Math.min(this.throttle + 0.015 * dt, 1);
+        } else if (this.keyS.isDown) {
+            this.throttle = Math.max(this.throttle - 0.015 * dt, -0.15); 
+        }
+
+        if (Phaser.Input.Keyboard.JustDown(this.keyN)) {
+            this.targetIndex = (this.targetIndex + 1) % this.stations.length;
+            this.targetStation = this.stations[this.targetIndex];
+        }
+    }
+
+    private applyPhysics(dt: number) {
+        const currentSpeed = this.velocity.length();
+        let thrustPower = this.baseAcceleration;
+        if (this.throttle > 0) {
+            thrustPower *= (1 + currentSpeed / 200);
+        } else if (this.throttle < 0) {
+            thrustPower *= 0.5;
+        }
+        
+        const accelerationMag = thrustPower * this.throttle;
+        const thrustDir = new Phaser.Math.Vector2(Math.cos(this.ship.rotation), Math.sin(this.ship.rotation));
+        const acceleration = thrustDir.scale(accelerationMag * dt);
+        
+        this.velocity.add(acceleration);
+        this.velocity.scale(1 - (0.001 * dt));
+
+        this.ship.x += this.velocity.x * dt;
+        this.ship.y += this.velocity.y * dt;
+    }
+
+    private updateCamera(dt: number) {
+        const speed = this.velocity.length();
+        const targetZoom = Math.max(1.0 / (1 + speed / 350), 0.1);
+        this.cameras.main.setZoom(Phaser.Math.Linear(this.cameras.main.zoom, targetZoom, 0.05 * dt));
+        
+        // Ensure UI camera always matches screen size but never zooms
+        this.uiCamera.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    private updateUI() {
+        const speed = Math.round(this.velocity.length());
+        this.speedText.setText(`SPEED: ${speed}\nTHROTTLE: ${Math.round(Math.max(0, this.throttle * 100))}%`);
+
+        this.navArrow.clear();
+        if (this.targetStation) {
+            const dist = Math.round(Phaser.Math.Distance.Between(this.ship.x, this.ship.y, this.targetStation.x, this.targetStation.y));
+            const stationLabel = this.targetStation.list[1] as Phaser.GameObjects.Text;
+            this.distText.setText(`TARGET: ${stationLabel.text}\nDISTANCE: ${dist}`);
+            
+            const angle = Phaser.Math.Angle.Between(this.ship.x, this.ship.y, this.targetStation.x, this.targetStation.y);
+            const zoom = this.cameras.main.zoom;
+            
+            // The visual radius of the arrow should be constant on screen
+            const visualRadius = 120; 
+            const arrowX = this.ship.x + Math.cos(angle) * (visualRadius / zoom);
+            const arrowY = this.ship.y + Math.sin(angle) * (visualRadius / zoom);
+            
+            // The arrow size should be constant on screen
+            const arrowSize = 12 / zoom;
+            this.navArrow.lineStyle(3 / zoom, 0x000000, 0.8);
+            this.navArrow.strokeTriangle(
+                arrowX + Math.cos(angle) * arrowSize * 1.5, arrowY + Math.sin(angle) * arrowSize * 1.5,
+                arrowX + Math.cos(angle + 2.5) * arrowSize, arrowY + Math.sin(angle + 2.5) * arrowSize,
+                arrowX + Math.cos(angle - 2.5) * arrowSize, arrowY + Math.sin(angle - 2.5) * arrowSize
+            );
+
+            if (dist < 500 && speed < 60) {
+                this.distText.setText(`TARGET: ${stationLabel.text}\nDISTANCE: ${dist}\n[ DOCKING AVAILABLE ]`);
+            }
+        }
+        
+        // Update hint text position in case window resized
+        this.hintText.setY(window.innerHeight - 50);
     }
 }
 
-// 2. Game Configuration
 const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
-    width: 800,
-    height: 600,
+    width: window.innerWidth,
+    height: window.innerHeight,
     parent: 'game-container',
+    scene: GameScene,
     physics: {
         default: 'arcade',
-        arcade: { gravity: { x: 0, y: 300 } }
-    },
-    scene: GameScene // Pass the class here
+        arcade: { debug: false }
+    }
 };
 
-new Phaser.Game(config);
+window.addEventListener('resize', () => {
+    // @ts-ignore
+    if (window.game) {
+        window.game.scale.resize(window.innerWidth, window.innerHeight);
+    }
+});
+
+// @ts-ignore
+window.game = new Phaser.Game(config);

@@ -1,4 +1,11 @@
 {
+  "name": "leet-lit",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
   "dependencies": {
     "http-server": "^14.1.1",
     "phaser": "^3.90.0",
