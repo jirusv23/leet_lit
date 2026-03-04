@@ -147,16 +147,21 @@ class GameScene extends Phaser.Scene {
         const mouseWorld = this.cameras.main.getWorldPoint(this.input.x, this.input.y);
         const targetAngle = Phaser.Math.Angle.Between(this.ship.x, this.ship.y, mouseWorld.x, mouseWorld.y);
         
+        // Rotation resistance increases with speed
+        // Base inertia 0.15, reduces as speed goes up
+        const speed = this.velocity.length();
+        const effectiveRotationInertia = Math.max(0.01, 0.15 / (1 + speed / 500));
+
         this.ship.rotation = Phaser.Math.Angle.RotateTo(
             this.ship.rotation,
             targetAngle,
-            this.rotationInertia * dt
+            effectiveRotationInertia * dt
         );
 
         if (this.keyW.isDown) {
             this.throttle = Math.min(this.throttle + 0.015 * dt, 1);
         } else if (this.keyS.isDown) {
-            this.throttle = Math.max(this.throttle - 0.015 * dt, -0.15); 
+            this.throttle = Math.max(this.throttle - 0.015 * dt, -0.2); 
         }
 
         if (Phaser.Input.Keyboard.JustDown(this.keyN)) {
@@ -171,7 +176,8 @@ class GameScene extends Phaser.Scene {
         if (this.throttle > 0) {
             thrustPower *= (1 + currentSpeed / 200);
         } else if (this.throttle < 0) {
-            thrustPower *= 0.5;
+            // Braking / Reverse is weaker
+            thrustPower *= 0.6;
         }
         
         const accelerationMag = thrustPower * this.throttle;
@@ -196,7 +202,9 @@ class GameScene extends Phaser.Scene {
 
     private updateUI() {
         const speed = Math.round(this.velocity.length());
-        this.speedText.setText(`SPEED: ${speed}\nTHROTTLE: ${Math.round(Math.max(0, this.throttle * 100))}%`);
+        const throttlePercent = Math.round(this.throttle * 100);
+        const throttleText = throttlePercent < 0 ? `[ BRAKE: ${Math.abs(throttlePercent)}% ]` : `THROTTLE: ${throttlePercent}%`;
+        this.speedText.setText(`SPEED: ${speed}\n${throttleText}`);
 
         this.navArrow.clear();
         if (this.targetStation) {
