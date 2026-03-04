@@ -35,7 +35,7 @@ const config: Phaser.Types.Core.GameConfig = {
     parent: 'game-container',
     physics: {
         default: 'arcade',
-        arcade: { gravity: { y: 300 } }
+        arcade: { gravity: { x: 0, y: 300 } }
     },
     scene: GameScene // Pass the class here
 };
