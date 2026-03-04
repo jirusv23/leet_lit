@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 
-const WORLD_SIZE = 400000;
+const WORLD_SIZE = 10000000; // Large world for 1M speed
 const SHIP_SIZE = 20;
 const STATION_SIZE = 150;
 
@@ -38,31 +38,21 @@ class GameScene extends Phaser.Scene {
         this.physics.world.setBounds(-WORLD_SIZE, -WORLD_SIZE, WORLD_SIZE * 2, WORLD_SIZE * 2);
 
         this.createStars();
-        this.createStations(15);
+        this.createStations(20);
         this.createShip();
 
-        // 1. Setup Main Camera for World
-        // We use a high lerp to keep it centered
         this.cameras.main.startFollow(this.ship, true, 1, 1);
         this.cameras.main.setFollowOffset(0, 0);
 
-        // 2. Setup UI Camera
-        // This camera will NOT zoom and will only render UI elements
         this.uiCamera = this.cameras.add(0, 0, window.innerWidth, window.innerHeight).setScroll(0, 0).setName('UI');
         
-        // Create UI elements
         this.speedText = this.add.text(30, 30, '', { color: '#000', fontSize: '24px', fontStyle: 'bold' });
         this.distText = this.add.text(30, 90, '', { color: '#000', fontSize: '20px' });
         this.hintText = this.add.text(30, window.innerHeight - 50, 'W/S: THROTTLE | MOUSE: AIM | N: NEXT STATION', { color: '#000', fontSize: '16px' });
         
-        // The Nav Arrow is tricky: it needs to point based on world coords but stay fixed size.
-        // We'll keep it in the world but scale its thickness/size manually to counteract zoom.
         this.navArrow = this.add.graphics().setDepth(10);
 
-        // Tell cameras what to ignore
-        // Main camera ignores UI text
         this.cameras.main.ignore([this.speedText, this.distText, this.hintText]);
-        // UI camera ignores EVERYTHING except UI text
         this.uiCamera.ignore([this.ship, this.navArrow, ...this.stations, ...this.stars.map(s => s.graphics)]);
 
         if (this.input.keyboard) {
@@ -74,7 +64,7 @@ class GameScene extends Phaser.Scene {
 
     private createStars() {
         const layers = 3;
-        const starCounts = [800, 400, 200];
+        const starCounts = [2000, 1000, 500];
         for (let i = 0; i < layers; i++) {
             const graphics = this.add.graphics();
             graphics.fillStyle(0x000000, 0.6);
@@ -93,7 +83,7 @@ class GameScene extends Phaser.Scene {
     private createStations(count: number) {
         for (let i = 0; i < count; i++) {
             const angle = Math.random() * Math.PI * 2;
-            const dist = 8000 + Math.random() * (WORLD_SIZE / 4);
+            const dist = 50000 + Math.random() * (WORLD_SIZE / 3);
             const x = Math.cos(angle) * dist;
             const y = Math.sin(angle) * dist;
             
@@ -147,8 +137,6 @@ class GameScene extends Phaser.Scene {
         const mouseWorld = this.cameras.main.getWorldPoint(this.input.x, this.input.y);
         const targetAngle = Phaser.Math.Angle.Between(this.ship.x, this.ship.y, mouseWorld.x, mouseWorld.y);
         
-        // Rotation resistance increases with speed
-        // Base inertia 0.15, reduces as speed goes up
         const speed = this.velocity.length();
         const effectiveRotationInertia = Math.max(0.01, 0.15 / (1 + speed / 500));
 
@@ -173,10 +161,16 @@ class GameScene extends Phaser.Scene {
     private applyPhysics(dt: number) {
         const currentSpeed = this.velocity.length();
         let thrustPower = this.baseAcceleration;
+        
         if (this.throttle > 0) {
             thrustPower *= (1 + currentSpeed / 200);
+            
+            // Soft cap at 900,000
+            if (currentSpeed > 900000) {
+                const softCapFactor = Math.max(0, 1 - (currentSpeed - 900000) / 100000);
+                thrustPower *= (0.01 + softCapFactor * 0.99); // Slow down significantly but keep a tiny bit
+            }
         } else if (this.throttle < 0) {
-            // Braking / Reverse is weaker
             thrustPower *= 0.6;
         }
         
@@ -185,6 +179,12 @@ class GameScene extends Phaser.Scene {
         const acceleration = thrustDir.scale(accelerationMag * dt);
         
         this.velocity.add(acceleration);
+
+        // Hard cap at 1,000,000
+        if (this.velocity.length() > 1000000) {
+            this.velocity.setLength(1000000);
+        }
+
         this.velocity.scale(1 - (0.001 * dt));
 
         this.ship.x += this.velocity.x * dt;
@@ -193,10 +193,8 @@ class GameScene extends Phaser.Scene {
 
     private updateCamera(dt: number) {
         const speed = this.velocity.length();
-        const targetZoom = Math.max(1.0 / (1 + speed / 350), 0.1);
+        const targetZoom = Math.max(1.0 / (1 + speed / 350), 0.05);
         this.cameras.main.setZoom(Phaser.Math.Linear(this.cameras.main.zoom, targetZoom, 0.05 * dt));
-        
-        // Ensure UI camera always matches screen size but never zooms
         this.uiCamera.setSize(window.innerWidth, window.innerHeight);
     }
 
@@ -215,12 +213,10 @@ class GameScene extends Phaser.Scene {
             const angle = Phaser.Math.Angle.Between(this.ship.x, this.ship.y, this.targetStation.x, this.targetStation.y);
             const zoom = this.cameras.main.zoom;
             
-            // The visual radius of the arrow should be constant on screen
             const visualRadius = 120; 
             const arrowX = this.ship.x + Math.cos(angle) * (visualRadius / zoom);
             const arrowY = this.ship.y + Math.sin(angle) * (visualRadius / zoom);
             
-            // The arrow size should be constant on screen
             const arrowSize = 12 / zoom;
             this.navArrow.lineStyle(3 / zoom, 0x000000, 0.8);
             this.navArrow.strokeTriangle(
@@ -233,8 +229,6 @@ class GameScene extends Phaser.Scene {
                 this.distText.setText(`TARGET: ${stationLabel.text}\nDISTANCE: ${dist}\n[ DOCKING AVAILABLE ]`);
             }
         }
-        
-        // Update hint text position in case window resized
         this.hintText.setY(window.innerHeight - 50);
     }
 }
@@ -253,9 +247,7 @@ const config: Phaser.Types.Core.GameConfig = {
 
 window.addEventListener('resize', () => {
     // @ts-ignore
-    if (window.game) {
-        window.game.scale.resize(window.innerWidth, window.innerHeight);
-    }
+    if (window.game) window.game.scale.resize(window.innerWidth, window.innerHeight);
 });
 
 // @ts-ignore
