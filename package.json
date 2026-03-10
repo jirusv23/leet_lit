@@ -2,7 +2,7 @@
   "name": "leet-lit",
   "version": "1.0.0",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 10000",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

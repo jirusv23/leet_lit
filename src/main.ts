@@ -7,7 +7,7 @@ const STATION_SIZE = 150;
 class GameScene extends Phaser.Scene {
     private ship!: Phaser.GameObjects.Container;
     private shipGraphics!: Phaser.GameObjects.Graphics;
-    private stars: { graphics: Phaser.GameObjects.Graphics, factor: number }[] = [];
+    private stars: { sprite: Phaser.GameObjects.TileSprite, factor: number }[] = [];
     private keyW!: Phaser.Input.Keyboard.Key;
     private keyS!: Phaser.Input.Keyboard.Key;
     private keyN!: Phaser.Input.Keyboard.Key;
@@ -53,7 +53,7 @@ class GameScene extends Phaser.Scene {
         this.navArrow = this.add.graphics().setDepth(10);
 
         this.cameras.main.ignore([this.speedText, this.distText, this.hintText]);
-        this.uiCamera.ignore([this.ship, this.navArrow, ...this.stations, ...this.stars.map(s => s.graphics)]);
+        this.uiCamera.ignore([this.ship, this.navArrow, ...this.stations, ...this.stars.map(s => s.sprite)]);
 
         if (this.input.keyboard) {
             this.keyW = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
@@ -63,20 +63,36 @@ class GameScene extends Phaser.Scene {
     }
 
     private createStars() {
-        const layers = 3;
-        const starCounts = [2000, 1000, 500];
+        const layers = 5;
+        // Extremely weak parallax for deep space
+        const baseScrollFactor = 0.002;
+        const textureSize = 1024; // Larger tile for more randomness
+        
         for (let i = 0; i < layers; i++) {
-            const graphics = this.add.graphics();
-            graphics.fillStyle(0x000000, 0.6);
-            const factor = (i + 1) * 0.15;
+            const textureKey = `stars_layer_${i}`;
+            const graphics = this.make.graphics({ x: 0, y: 0 });
             
-            for (let j = 0; j < starCounts[i]; j++) {
-                const x = Phaser.Math.Between(-WORLD_SIZE / 2, WORLD_SIZE / 2);
-                const y = Phaser.Math.Between(-WORLD_SIZE / 2, WORLD_SIZE / 2);
-                graphics.fillCircle(x, y, 1 + i);
+            const factor = baseScrollFactor * Math.pow(2, i); // 0.002, 0.004, 0.008, 0.016, 0.032
+            const alpha = 0.1 + (i * 0.05); // Slightly more opaque
+            const radius = 1.0 + (i * 0.8); // Bigger stars
+            const count = 5 + (i * 3); // Very few stars per tile
+
+            graphics.fillStyle(0x000000, alpha);
+            for (let j = 0; j < count; j++) {
+                const x = Phaser.Math.Between(0, textureSize);
+                const y = Phaser.Math.Between(0, textureSize);
+                graphics.fillCircle(x, y, radius);
             }
-            graphics.setScrollFactor(factor);
-            this.stars.push({ graphics, factor });
+
+            graphics.generateTexture(textureKey, textureSize, textureSize);
+            graphics.destroy();
+
+            const tileSprite = this.add.tileSprite(0, 0, window.innerWidth, window.innerHeight, textureKey)
+                .setOrigin(0, 0)
+                .setScrollFactor(0)
+                .setDepth(-10 + i);
+            
+            this.stars.push({ sprite: tileSprite, factor });
         }
     }
 
@@ -195,6 +211,15 @@ class GameScene extends Phaser.Scene {
         const speed = this.velocity.length();
         const targetZoom = Math.max(1.0 / (1 + speed / 350), 0.05);
         this.cameras.main.setZoom(Phaser.Math.Linear(this.cameras.main.zoom, targetZoom, 0.05 * dt));
+        
+        // Update stars tile position and size
+        const cam = this.cameras.main;
+        this.stars.forEach(layer => {
+            layer.sprite.setTilePosition(cam.scrollX * layer.factor, cam.scrollY * layer.factor);
+            layer.sprite.setSize(window.innerWidth / cam.zoom, window.innerHeight / cam.zoom);
+            layer.sprite.setScale(1 / cam.zoom);
+        });
+
         this.uiCamera.setSize(window.innerWidth, window.innerHeight);
     }
 
