@@ -69,17 +69,17 @@ class GameScene extends Phaser.Scene {
     private createStars() {
         const layers = 5;
         // Extremely weak parallax for deep space
-        const baseScrollFactor = 0.002;
+        const baseScrollFactor = 0.00002;
         const textureSize = 1024; // Larger tile for more randomness
         
         for (let i = 0; i < layers; i++) {
             const textureKey = `stars_layer_${i}`;
             const graphics = this.make.graphics({ x: 0, y: 0 });
             
-            const factor = baseScrollFactor * Math.pow(2, i); // 0.002, 0.004, 0.008, 0.016, 0.032
-            const alpha = 0.1 + (i * 0.05); // Slightly more opaque
-            const radius = 1.0 + (i * 0.8); // Bigger stars
-            const count = 5 + (i * 3); // Very few stars per tile
+            const factor = baseScrollFactor * Math.pow(2.5, i); 
+            const alpha = 0.1 + (i * 0.05); 
+            const radius = 1.0 + (i * 0.8); 
+            const count = 8 + (i * 4); 
 
             graphics.fillStyle(0x000000, alpha);
             for (let j = 0; j < count; j++) {
@@ -201,7 +201,7 @@ class GameScene extends Phaser.Scene {
         if (this.keyW.isDown) {
             this.throttle = Math.min(this.throttle + 0.015 * dt, 1);
         } else if (this.keyS.isDown) {
-            this.throttle = Math.max(this.throttle - 0.015 * dt, -0.2); 
+            this.throttle = Math.max(this.throttle - 0.015 * dt, -1); 
         }
 
         if (Phaser.Input.Keyboard.JustDown(this.keyN)) {
@@ -226,9 +226,9 @@ class GameScene extends Phaser.Scene {
             const acceleration = thrustDir.scale(thrustPower * this.throttle * dt);
             this.velocity.add(acceleration);
         } else if (this.throttle < 0) {
-            // Breaking reduces current speed until it hits zero, then stops.
-            // Increased braking force (2.0 instead of 0.6) for better responsiveness.
-            const brakeForce = this.baseAcceleration * 2.0 * Math.abs(this.throttle) * dt;
+            // Braking reduces current speed until it hits zero, then stops.
+            // Increased braking force multiplier from 2.0 to 15.0 for much stronger deceleration.
+            const brakeForce = this.baseAcceleration * 15.0 * Math.abs(this.throttle) * dt;
             if (currentSpeed > brakeForce) {
                 this.velocity.setLength(currentSpeed - brakeForce);
             } else {
@@ -255,7 +255,7 @@ class GameScene extends Phaser.Scene {
         // Update stars tile position based on camera scroll
         const cam = this.cameras.main;
         this.stars.forEach(layer => {
-            // stars are on uiCamera (scrollFactor 0), so we just update tilePosition
+            // stars are on uiCamera (scrollFactor 0), so we just update tilePosition for parallax
             layer.sprite.setTilePosition(cam.scrollX * layer.factor, cam.scrollY * layer.factor);
             layer.sprite.setSize(window.innerWidth, window.innerHeight);
         });
