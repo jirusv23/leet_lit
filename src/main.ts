@@ -14,6 +14,9 @@ class GameScene extends Phaser.Scene {
     private keyN!: Phaser.Input.Keyboard.Key;
     private keyX!: Phaser.Input.Keyboard.Key;
     private keyE!: Phaser.Input.Keyboard.Key;
+    private keyC!: Phaser.Input.Keyboard.Key;
+    private key1!: Phaser.Input.Keyboard.Key;
+    private key2!: Phaser.Input.Keyboard.Key;
     
     // Physics variables
     private velocity = new Phaser.Math.Vector2(0, 0);
@@ -26,6 +29,7 @@ class GameScene extends Phaser.Scene {
     private speedText!: Phaser.GameObjects.Text;
     private distText!: Phaser.GameObjects.Text;
     private hintText!: Phaser.GameObjects.Text;
+    private commText!: Phaser.GameObjects.Text;
     private pointerDistText!: Phaser.GameObjects.Text;
     private navArrow!: Phaser.GameObjects.Graphics;
     private moveArrow!: Phaser.GameObjects.Graphics;
@@ -34,6 +38,10 @@ class GameScene extends Phaser.Scene {
     private stations: Phaser.GameObjects.Container[] = [];
     private targetIndex = 0;
     private canEnterStation = false;
+
+    // Comm variables
+    private commStatus: 'none' | 'calling' | 'identifying' | 'scanning' | 'granted' = 'none';
+    private commTimer = 0;
 
     constructor() {
         super('GameScene');
@@ -54,13 +62,14 @@ class GameScene extends Phaser.Scene {
         
         this.speedText = this.add.text(30, 30, '', { color: '#000', fontSize: '24px', fontStyle: 'bold' });
         this.distText = this.add.text(30, 90, '', { color: '#000', fontSize: '20px' });
-        this.hintText = this.add.text(30, window.innerHeight - 50, 'W/S: THROTTLE | X: 5% BRAKE | MOUSE: AIM | N: NEXT | E: ENTER', { color: '#000', fontSize: '16px' });
+        this.commText = this.add.text(window.innerWidth / 2, window.innerHeight - 120, '', { color: '#000', fontSize: '18px', fontStyle: 'bold', align: 'center', backgroundColor: '#fff', padding: { x: 10, y: 5 } }).setOrigin(0.5);
+        this.hintText = this.add.text(30, window.innerHeight - 50, 'W/S: THROTTLE | X: 5% BRAKE | MOUSE: AIM | N: NEXT | C: COMMS', { color: '#000', fontSize: '16px' });
         this.pointerDistText = this.add.text(0, 0, '', { color: '#000', fontSize: '14px', backgroundColor: 'rgba(255,255,255,0.5)' }).setOrigin(0.5, -1);
         
         this.navArrow = this.add.graphics().setDepth(10);
         this.moveArrow = this.add.graphics().setDepth(11);
 
-        this.cameras.main.ignore([this.speedText, this.distText, this.hintText, this.pointerDistText, this.moveArrow, ...this.stars.map(s => s.sprite)]);
+        this.cameras.main.ignore([this.speedText, this.distText, this.hintText, this.commText, this.pointerDistText, this.moveArrow, ...this.stars.map(s => s.sprite)]);
         // UI camera now handles stars and UI text
         this.uiCamera.ignore([this.ship, this.navArrow, ...this.stations]);
 
@@ -70,6 +79,9 @@ class GameScene extends Phaser.Scene {
             this.keyN = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.N);
             this.keyX = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.X);
             this.keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+            this.keyC = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C);
+            this.key1 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE);
+            this.key2 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TWO);
         }
     }
 
@@ -216,6 +228,24 @@ class GameScene extends Phaser.Scene {
         if (Phaser.Input.Keyboard.JustDown(this.keyN)) {
             this.targetIndex = (this.targetIndex + 1) % this.stations.length;
             this.targetStation = this.stations[this.targetIndex];
+            this.commStatus = 'none';
+        }
+
+        // Comm Logic
+        const dist = this.targetStation ? Phaser.Math.Distance.Between(this.ship.x, this.ship.y, this.targetStation.x, this.targetStation.y) : Infinity;
+        
+        if (dist < 2000) {
+            if (this.commStatus === 'none' && Phaser.Input.Keyboard.JustDown(this.keyC)) {
+                this.commStatus = 'calling';
+                this.commTimer = 100;
+            } else if (this.commStatus === 'identifying') {
+                if (Phaser.Input.Keyboard.JustDown(this.key1) || Phaser.Input.Keyboard.JustDown(this.key2)) {
+                    this.commStatus = 'scanning';
+                    this.commTimer = 180;
+                }
+            }
+        } else {
+            this.commStatus = 'none';
         }
 
         if (this.canEnterStation && Phaser.Input.Keyboard.JustDown(this.keyE)) {
@@ -319,6 +349,8 @@ class GameScene extends Phaser.Scene {
         }
 
         this.canEnterStation = false;
+        this.commText.setText('');
+
         if (this.targetStation) {
             const dist = Math.round(Phaser.Math.Distance.Between(this.ship.x, this.ship.y, this.targetStation.x, this.targetStation.y));
             const stationLabel = this.targetStation.list[1] as Phaser.GameObjects.Text;
@@ -344,9 +376,27 @@ class GameScene extends Phaser.Scene {
                 arrowX + Math.cos(angle - 2.5) * arrowSize, arrowY + Math.sin(angle - 2.5) * arrowSize
             );
 
-            if (dist < 500 && speed < 60) {
-                this.distText.setText(`TARGET: ${stationLabel.text}\nDISTANCE: ${dist}\n[ DOCKING AVAILABLE - PRESS E ]`);
-                this.canEnterStation = true;
+            // Comm UI
+            if (dist < 2000) {
+                if (this.commStatus === 'none') {
+                    this.commText.setText('[ COMM LINK AVAILABLE - PRESS C ]');
+                } else if (this.commStatus === 'calling') {
+                    this.commTimer--;
+                    this.commText.setText('TOWER: UNIDENTIFIED CRAFT, STATE YOUR IDENTIFICATION.');
+                    if (this.commTimer <= 0) this.commStatus = 'identifying';
+                } else if (this.commStatus === 'identifying') {
+                    this.commText.setText('SELECT ID:\n[1] MERCHANT-7  [2] EXPLORER-1');
+                } else if (this.commStatus === 'scanning') {
+                    this.commTimer--;
+                    this.commText.setText(`TOWER: COPY THAT. SCANNING VESSEL... ${Math.ceil(this.commTimer/60)}s`);
+                    if (this.commTimer <= 0) this.commStatus = 'granted';
+                } else if (this.commStatus === 'granted') {
+                    this.commText.setText('TOWER: SCAN COMPLETE. CLEARANCE GRANTED.\\nPROCEED TO LANDING BAY.');
+                    if (dist < 500 && speed < 60) {
+                        this.distText.setText(`TARGET: ${stationLabel.text}\\nDISTANCE: ${dist}\\n[ DOCKING AVAILABLE - PRESS E ]`);
+                        this.canEnterStation = true;
+                    }
+                }
             }
         } else {
             this.pointerDistText.setText('');
