@@ -13,6 +13,7 @@ class GameScene extends Phaser.Scene {
     private keyS!: Phaser.Input.Keyboard.Key;
     private keyN!: Phaser.Input.Keyboard.Key;
     private keyX!: Phaser.Input.Keyboard.Key;
+    private keyE!: Phaser.Input.Keyboard.Key;
     
     // Physics variables
     private velocity = new Phaser.Math.Vector2(0, 0);
@@ -32,6 +33,7 @@ class GameScene extends Phaser.Scene {
     private targetStation?: Phaser.GameObjects.Container;
     private stations: Phaser.GameObjects.Container[] = [];
     private targetIndex = 0;
+    private canEnterStation = false;
 
     constructor() {
         super('GameScene');
@@ -52,7 +54,7 @@ class GameScene extends Phaser.Scene {
         
         this.speedText = this.add.text(30, 30, '', { color: '#000', fontSize: '24px', fontStyle: 'bold' });
         this.distText = this.add.text(30, 90, '', { color: '#000', fontSize: '20px' });
-        this.hintText = this.add.text(30, window.innerHeight - 50, 'W/S: THROTTLE | X: 5% BRAKE | MOUSE: AIM | N: NEXT STATION', { color: '#000', fontSize: '16px' });
+        this.hintText = this.add.text(30, window.innerHeight - 50, 'W/S: THROTTLE | X: 5% BRAKE | MOUSE: AIM | N: NEXT | E: ENTER', { color: '#000', fontSize: '16px' });
         this.pointerDistText = this.add.text(0, 0, '', { color: '#000', fontSize: '14px', backgroundColor: 'rgba(255,255,255,0.5)' }).setOrigin(0.5, -1);
         
         this.navArrow = this.add.graphics().setDepth(10);
@@ -67,6 +69,7 @@ class GameScene extends Phaser.Scene {
             this.keyS = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S);
             this.keyN = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.N);
             this.keyX = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.X);
+            this.keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
         }
     }
 
@@ -214,6 +217,10 @@ class GameScene extends Phaser.Scene {
             this.targetIndex = (this.targetIndex + 1) % this.stations.length;
             this.targetStation = this.stations[this.targetIndex];
         }
+
+        if (this.canEnterStation && Phaser.Input.Keyboard.JustDown(this.keyE)) {
+            this.scene.start('LandingScene', { station: this.targetStation });
+        }
     }
 
     private applyPhysics(dt: number) {
@@ -311,6 +318,7 @@ class GameScene extends Phaser.Scene {
             );
         }
 
+        this.canEnterStation = false;
         if (this.targetStation) {
             const dist = Math.round(Phaser.Math.Distance.Between(this.ship.x, this.ship.y, this.targetStation.x, this.targetStation.y));
             const stationLabel = this.targetStation.list[1] as Phaser.GameObjects.Text;
@@ -337,7 +345,8 @@ class GameScene extends Phaser.Scene {
             );
 
             if (dist < 500 && speed < 60) {
-                this.distText.setText(`TARGET: ${stationLabel.text}\nDISTANCE: ${dist}\n[ DOCKING AVAILABLE ]`);
+                this.distText.setText(`TARGET: ${stationLabel.text}\nDISTANCE: ${dist}\n[ DOCKING AVAILABLE - PRESS E ]`);
+                this.canEnterStation = true;
             }
         } else {
             this.pointerDistText.setText('');
@@ -346,12 +355,149 @@ class GameScene extends Phaser.Scene {
     }
 }
 
+class LandingScene extends Phaser.Scene {
+    private ship!: Phaser.GameObjects.Container;
+    private thrustGraphics!: Phaser.GameObjects.Graphics;
+    private velocity = new Phaser.Math.Vector2(0, 0);
+    private keys!: any;
+    private statusText!: Phaser.GameObjects.Text;
+    private gravity = 0.15;
+    private thrustPower = 0.4;
+    private landed = false;
+
+    constructor() {
+        super('LandingScene');
+    }
+
+    create() {
+        this.cameras.main.setBackgroundColor('#ffffff');
+        this.landed = false;
+        this.velocity.set(0, 0);
+
+        // Landing Bay
+        const bayWidth = 300;
+        const bayHeight = 20;
+        const bayX = window.innerWidth / 2;
+        const bayY = window.innerHeight - 100;
+
+        const bay = this.add.graphics();
+        bay.lineStyle(4, 0x000000);
+        bay.strokeRect(bayX - bayWidth / 2, bayY, bayWidth, bayHeight);
+        bay.fillStyle(0x000000, 0.05);
+        bay.fillRect(bayX - bayWidth / 2, bayY, bayWidth, bayHeight);
+        
+        this.add.text(bayX, bayY + 40, 'LANDING BAY', { color: '#000', fontSize: '20px', fontStyle: 'bold' }).setOrigin(0.5);
+
+        // Ship (Side view)
+        this.ship = this.add.container(window.innerWidth / 2, 100);
+        const shipG = this.add.graphics();
+        shipG.lineStyle(3, 0x000000);
+        // Boxy lander shape
+        shipG.strokeRect(-20, -10, 40, 20);
+        shipG.strokeRect(-25, 10, 10, 10); // Leg L
+        shipG.strokeRect(15, 10, 10, 10);  // Leg R
+        this.ship.add(shipG);
+
+        this.thrustGraphics = this.add.graphics();
+        this.ship.add(this.thrustGraphics);
+
+        this.statusText = this.add.text(30, 30, '', { color: '#000', fontSize: '24px', fontStyle: 'bold' });
+        this.add.text(30, window.innerHeight - 50, 'WASD: THRUSTERS | ESC: ABORT', { color: '#000', fontSize: '16px' });
+
+        if (this.input.keyboard) {
+            this.keys = this.input.keyboard.addKeys('W,A,S,D,ESC');
+        }
+    }
+
+    update(time: number, delta: number) {
+        if (this.keys.ESC.isDown) {
+            if (this.landed && this.statusText.text.includes('CRASHED')) {
+                this.scene.restart();
+            } else {
+                this.scene.start('GameScene');
+            }
+            return;
+        }
+
+        if (this.landed) return;
+
+        const dt = Math.min(delta, 32) / 16.6;
+
+        // Physics
+        this.velocity.y += this.gravity * dt;
+
+        this.thrustGraphics.clear();
+        if (this.keys.W.isDown) {
+            this.velocity.y -= this.thrustPower * dt;
+            this.drawThrust(0, 20, 0);
+        }
+        if (this.keys.A.isDown) {
+            this.velocity.x -= this.thrustPower * 0.5 * dt;
+            this.drawThrust(20, 0, -Math.PI/2);
+        }
+        if (this.keys.D.isDown) {
+            this.velocity.x += this.thrustPower * 0.5 * dt;
+            this.drawThrust(-20, 0, Math.PI/2);
+        }
+
+        this.ship.x += this.velocity.x * dt;
+        this.ship.y += this.velocity.y * dt;
+
+        // Status
+        const vx = Math.abs(this.velocity.x).toFixed(1);
+        const vy = Math.abs(this.velocity.y).toFixed(1);
+        this.statusText.setText(`V-SPEED: ${vy}\nH-SPEED: ${vx}`);
+
+        // Collision with Landing Bay
+        const bayY = window.innerHeight - 100;
+        const bayX = window.innerWidth / 2;
+        const bayWidth = 300;
+
+        if (this.ship.y + 20 >= bayY) {
+            this.ship.y = bayY - 20;
+            
+            const onBay = Math.abs(this.ship.x - bayX) < bayWidth / 2;
+            const safeVSpeed = Math.abs(this.velocity.y) < 2.5;
+            const safeHSpeed = Math.abs(this.velocity.x) < 1.5;
+
+            if (onBay && safeVSpeed && safeHSpeed) {
+                this.landed = true;
+                this.statusText.setText('LANDING SUCCESSFUL!\nPRESS ESC TO LEAVE');
+                this.velocity.set(0, 0);
+            } else {
+                this.landed = true;
+                this.statusText.setText('CRASHED!\nPRESS ESC TO RETRY');
+                this.ship.setAlpha(0.5);
+                this.velocity.set(0, 0);
+            }
+        }
+
+        // Screen bounds
+        if (this.ship.x < 0) this.ship.x = window.innerWidth;
+        if (this.ship.x > window.innerWidth) this.ship.x = 0;
+    }
+
+    private drawThrust(x: number, y: number, angle: number) {
+        this.thrustGraphics.lineStyle(2, 0xffaa00, 0.8);
+        this.thrustGraphics.fillStyle(0xffaa00, 0.4);
+        const size = 15 + Math.random() * 10;
+        
+        const points = [
+            new Phaser.Math.Vector2(x - 5, y),
+            new Phaser.Math.Vector2(x, y + size),
+            new Phaser.Math.Vector2(x + 5, y)
+        ];
+        // Note: Simplistic rotation for side view thrusters
+        this.thrustGraphics.strokePoints(points, true);
+    }
+}
+
 const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
     width: window.innerWidth,
     height: window.innerHeight,
     parent: 'game-container',
-    scene: GameScene,
+    scene: [GameScene, LandingScene],
     physics: {
         default: 'arcade',
         arcade: { debug: false }
