@@ -26,6 +26,7 @@ class GameScene extends Phaser.Scene {
     private hintText!: Phaser.GameObjects.Text;
     private pointerDistText!: Phaser.GameObjects.Text;
     private navArrow!: Phaser.GameObjects.Graphics;
+    private moveArrow!: Phaser.GameObjects.Graphics;
     
     private targetStation?: Phaser.GameObjects.Container;
     private stations: Phaser.GameObjects.Container[] = [];
@@ -54,10 +55,11 @@ class GameScene extends Phaser.Scene {
         this.pointerDistText = this.add.text(0, 0, '', { color: '#000', fontSize: '14px', backgroundColor: 'rgba(255,255,255,0.5)' }).setOrigin(0.5, -1);
         
         this.navArrow = this.add.graphics().setDepth(10);
+        this.moveArrow = this.add.graphics().setDepth(11);
 
         this.cameras.main.ignore([this.speedText, this.distText, this.hintText, this.pointerDistText, ...this.stars.map(s => s.sprite)]);
         // UI camera now handles stars and UI text
-        this.uiCamera.ignore([this.ship, this.navArrow, ...this.stations]);
+        this.uiCamera.ignore([this.ship, this.navArrow, this.moveArrow, ...this.stations]);
 
         if (this.input.keyboard) {
             this.keyW = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
@@ -249,7 +251,7 @@ class GameScene extends Phaser.Scene {
 
     private updateCamera(dt: number) {
         const speed = this.velocity.length();
-        const targetZoom = Math.max(1.0 / (1 + speed / 350), 0.1);
+        const targetZoom = Math.max(1.0 / (1 + speed / 350), 0.05);
         this.cameras.main.setZoom(Phaser.Math.Linear(this.cameras.main.zoom, targetZoom, 0.05 * dt));
 
         const zoom = this.cameras.main.zoom;
@@ -277,13 +279,30 @@ class GameScene extends Phaser.Scene {
         this.speedText.setText(`SPEED: ${speed}\n${throttleText}`);
 
         this.navArrow.clear();
+        this.moveArrow.clear();
+        const zoom = this.cameras.main.zoom;
+
+        if (speed > 10) {
+            const moveAngle = this.velocity.angle();
+            const moveVisualRadius = 80;
+            const moveArrowX = this.ship.x + Math.cos(moveAngle) * (moveVisualRadius / zoom);
+            const moveArrowY = this.ship.y + Math.sin(moveAngle) * (moveVisualRadius / zoom);
+            const moveArrowSize = 8 / zoom;
+
+            this.moveArrow.lineStyle(2 / zoom, 0x0066ff, 0.6);
+            this.moveArrow.strokeTriangle(
+                moveArrowX + Math.cos(moveAngle) * moveArrowSize * 1.5, moveArrowY + Math.sin(moveAngle) * moveArrowSize * 1.5,
+                moveArrowX + Math.cos(moveAngle + 2.5) * moveArrowSize, moveArrowY + Math.sin(moveAngle + 2.5) * moveArrowSize,
+                moveArrowX + Math.cos(moveAngle - 2.5) * moveArrowSize, moveArrowY + Math.sin(moveAngle - 2.5) * moveArrowSize
+            );
+        }
+
         if (this.targetStation) {
             const dist = Math.round(Phaser.Math.Distance.Between(this.ship.x, this.ship.y, this.targetStation.x, this.targetStation.y));
             const stationLabel = this.targetStation.list[1] as Phaser.GameObjects.Text;
             this.distText.setText(`TARGET: ${stationLabel.text}\nDISTANCE: ${dist}`);
             
             const angle = Phaser.Math.Angle.Between(this.ship.x, this.ship.y, this.targetStation.x, this.targetStation.y);
-            const zoom = this.cameras.main.zoom;
             
             const visualRadius = 120; 
             const arrowX = this.ship.x + Math.cos(angle) * (visualRadius / zoom);
