@@ -249,8 +249,15 @@ class GameScene extends Phaser.Scene {
 
     private updateCamera(dt: number) {
         const speed = this.velocity.length();
-        const targetZoom = Math.max(1.0 / (1 + speed / 350), 0.05);
+        const targetZoom = Math.max(1.0 / (1 + speed / 350), 0.1);
         this.cameras.main.setZoom(Phaser.Math.Linear(this.cameras.main.zoom, targetZoom, 0.05 * dt));
+
+        const zoom = this.cameras.main.zoom;
+        // Ensure ship is always visible by scaling it up as we zoom out
+        // Visual size = SHIP_SIZE * zoom * scale. 
+        // We want visual size to be at least ~15px. 15 / (SHIP_SIZE * zoom)
+        const minVisualSize = 15;
+        this.ship.setScale(Math.max(1, minVisualSize / (SHIP_SIZE * zoom)));
         
         // Update stars tile position based on camera scroll
         const cam = this.cameras.main;
