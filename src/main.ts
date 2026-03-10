@@ -12,6 +12,7 @@ class GameScene extends Phaser.Scene {
     private keyW!: Phaser.Input.Keyboard.Key;
     private keyS!: Phaser.Input.Keyboard.Key;
     private keyN!: Phaser.Input.Keyboard.Key;
+    private keyX!: Phaser.Input.Keyboard.Key;
     
     // Physics variables
     private velocity = new Phaser.Math.Vector2(0, 0);
@@ -51,20 +52,21 @@ class GameScene extends Phaser.Scene {
         
         this.speedText = this.add.text(30, 30, '', { color: '#000', fontSize: '24px', fontStyle: 'bold' });
         this.distText = this.add.text(30, 90, '', { color: '#000', fontSize: '20px' });
-        this.hintText = this.add.text(30, window.innerHeight - 50, 'W/S: THROTTLE | MOUSE: AIM | N: NEXT STATION', { color: '#000', fontSize: '16px' });
+        this.hintText = this.add.text(30, window.innerHeight - 50, 'W/S: THROTTLE | X: 5% BRAKE | MOUSE: AIM | N: NEXT STATION', { color: '#000', fontSize: '16px' });
         this.pointerDistText = this.add.text(0, 0, '', { color: '#000', fontSize: '14px', backgroundColor: 'rgba(255,255,255,0.5)' }).setOrigin(0.5, -1);
         
         this.navArrow = this.add.graphics().setDepth(10);
         this.moveArrow = this.add.graphics().setDepth(11);
 
-        this.cameras.main.ignore([this.speedText, this.distText, this.hintText, this.pointerDistText, ...this.stars.map(s => s.sprite)]);
+        this.cameras.main.ignore([this.speedText, this.distText, this.hintText, this.pointerDistText, this.moveArrow, ...this.stars.map(s => s.sprite)]);
         // UI camera now handles stars and UI text
-        this.uiCamera.ignore([this.ship, this.navArrow, this.moveArrow, ...this.stations]);
+        this.uiCamera.ignore([this.ship, this.navArrow, ...this.stations]);
 
         if (this.input.keyboard) {
             this.keyW = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
             this.keyS = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S);
             this.keyN = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.N);
+            this.keyX = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.X);
         }
     }
 
@@ -204,6 +206,8 @@ class GameScene extends Phaser.Scene {
             this.throttle = Math.min(this.throttle + 0.015 * dt, 1);
         } else if (this.keyS.isDown) {
             this.throttle = Math.max(this.throttle - 0.015 * dt, -1); 
+        } else if (Phaser.Input.Keyboard.JustDown(this.keyX)) {
+            this.throttle = -0.05;
         }
 
         if (Phaser.Input.Keyboard.JustDown(this.keyN)) {
@@ -251,7 +255,8 @@ class GameScene extends Phaser.Scene {
 
     private updateCamera(dt: number) {
         const speed = this.velocity.length();
-        const targetZoom = Math.max(1.0 / (1 + speed / 350), 0.05);
+        // Lower floor to 0.01 for much more zoom out, and adjusted divisor for more aggressive curve
+        const targetZoom = Math.max(1.0 / (1 + speed / 250), 0.01);
         this.cameras.main.setZoom(Phaser.Math.Linear(this.cameras.main.zoom, targetZoom, 0.05 * dt));
 
         const zoom = this.cameras.main.zoom;
@@ -282,18 +287,27 @@ class GameScene extends Phaser.Scene {
         this.moveArrow.clear();
         const zoom = this.cameras.main.zoom;
 
-        if (speed > 10) {
-            const moveAngle = this.velocity.angle();
-            const moveVisualRadius = 80;
-            const moveArrowX = this.ship.x + Math.cos(moveAngle) * (moveVisualRadius / zoom);
-            const moveArrowY = this.ship.y + Math.sin(moveAngle) * (moveVisualRadius / zoom);
-            const moveArrowSize = 8 / zoom;
+        // Draw movement indicator instrument in top-right
+        const instrumentX = window.innerWidth - 80;
+        const instrumentY = 80;
+        const instrumentRadius = 50;
 
-            this.moveArrow.lineStyle(2 / zoom, 0x0066ff, 0.6);
+        this.moveArrow.lineStyle(2, 0x000000, 1);
+        this.moveArrow.strokeCircle(instrumentX, instrumentY, instrumentRadius);
+        this.moveArrow.fillStyle(0x000000, 0.1);
+        this.moveArrow.fillCircle(instrumentX, instrumentY, instrumentRadius);
+
+        if (speed > 1) {
+            const moveAngle = this.velocity.angle();
+            const arrowSize = 15;
+            const tipX = instrumentX + Math.cos(moveAngle) * (instrumentRadius * 0.8);
+            const tipY = instrumentY + Math.sin(moveAngle) * (instrumentRadius * 0.8);
+
+            this.moveArrow.lineStyle(3, 0x000000, 1);
             this.moveArrow.strokeTriangle(
-                moveArrowX + Math.cos(moveAngle) * moveArrowSize * 1.5, moveArrowY + Math.sin(moveAngle) * moveArrowSize * 1.5,
-                moveArrowX + Math.cos(moveAngle + 2.5) * moveArrowSize, moveArrowY + Math.sin(moveAngle + 2.5) * moveArrowSize,
-                moveArrowX + Math.cos(moveAngle - 2.5) * moveArrowSize, moveArrowY + Math.sin(moveAngle - 2.5) * moveArrowSize
+                tipX, tipY,
+                instrumentX + Math.cos(moveAngle + 2.5) * arrowSize, instrumentY + Math.sin(moveAngle + 2.5) * arrowSize,
+                instrumentX + Math.cos(moveAngle - 2.5) * arrowSize, instrumentY + Math.sin(moveAngle - 2.5) * arrowSize
             );
         }
 
