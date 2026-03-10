@@ -7,6 +7,7 @@ const STATION_SIZE = 150;
 class GameScene extends Phaser.Scene {
     private ship!: Phaser.GameObjects.Container;
     private shipGraphics!: Phaser.GameObjects.Graphics;
+    private thrustGraphics!: Phaser.GameObjects.Graphics;
     private stars: { sprite: Phaser.GameObjects.TileSprite, factor: number }[] = [];
     private keyW!: Phaser.Input.Keyboard.Key;
     private keyS!: Phaser.Input.Keyboard.Key;
@@ -23,6 +24,7 @@ class GameScene extends Phaser.Scene {
     private speedText!: Phaser.GameObjects.Text;
     private distText!: Phaser.GameObjects.Text;
     private hintText!: Phaser.GameObjects.Text;
+    private pointerDistText!: Phaser.GameObjects.Text;
     private navArrow!: Phaser.GameObjects.Graphics;
     
     private targetStation?: Phaser.GameObjects.Container;
@@ -49,11 +51,13 @@ class GameScene extends Phaser.Scene {
         this.speedText = this.add.text(30, 30, '', { color: '#000', fontSize: '24px', fontStyle: 'bold' });
         this.distText = this.add.text(30, 90, '', { color: '#000', fontSize: '20px' });
         this.hintText = this.add.text(30, window.innerHeight - 50, 'W/S: THROTTLE | MOUSE: AIM | N: NEXT STATION', { color: '#000', fontSize: '16px' });
+        this.pointerDistText = this.add.text(0, 0, '', { color: '#000', fontSize: '14px', backgroundColor: 'rgba(255,255,255,0.5)' }).setOrigin(0.5, -1);
         
         this.navArrow = this.add.graphics().setDepth(10);
 
-        this.cameras.main.ignore([this.speedText, this.distText, this.hintText]);
-        this.uiCamera.ignore([this.ship, this.navArrow, ...this.stations, ...this.stars.map(s => s.sprite)]);
+        this.cameras.main.ignore([this.speedText, this.distText, this.hintText, this.pointerDistText, ...this.stars.map(s => s.sprite)]);
+        // UI camera now handles stars and UI text
+        this.uiCamera.ignore([this.ship, this.navArrow, ...this.stations]);
 
         if (this.input.keyboard) {
             this.keyW = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
@@ -128,6 +132,10 @@ class GameScene extends Phaser.Scene {
 
     private createShip() {
         this.ship = this.add.container(0, 0);
+        
+        this.thrustGraphics = this.add.graphics();
+        this.ship.add(this.thrustGraphics);
+
         this.shipGraphics = this.add.graphics();
         this.shipGraphics.lineStyle(3, 0x000000);
         
@@ -145,8 +153,36 @@ class GameScene extends Phaser.Scene {
 
         this.handleInput(dt);
         this.applyPhysics(dt);
+        this.updateThrustGraphic();
         this.updateCamera(dt);
         this.updateUI();
+    }
+
+    private updateThrustGraphic() {
+        this.thrustGraphics.clear();
+        if (this.throttle > 0) {
+            const size = SHIP_SIZE * (0.8 + Math.random() * 0.4) * this.throttle;
+            
+            // Outer flame
+            this.thrustGraphics.lineStyle(2, 0xffaa00, 0.5);
+            this.thrustGraphics.fillStyle(0xffaa00, 0.3);
+            const outerPoints = [
+                new Phaser.Math.Vector2(-SHIP_SIZE, SHIP_SIZE * 0.7),
+                new Phaser.Math.Vector2(-SHIP_SIZE - size * 2.5, 0),
+                new Phaser.Math.Vector2(-SHIP_SIZE, -SHIP_SIZE * 0.7)
+            ];
+            this.thrustGraphics.fillPoints(outerPoints, true);
+            this.thrustGraphics.strokePoints(outerPoints, true);
+
+            // Inner flame
+            this.thrustGraphics.fillStyle(0xffffff, 0.6);
+            const innerPoints = [
+                new Phaser.Math.Vector2(-SHIP_SIZE, SHIP_SIZE * 0.4),
+                new Phaser.Math.Vector2(-SHIP_SIZE - size * 1.2, 0),
+                new Phaser.Math.Vector2(-SHIP_SIZE, -SHIP_SIZE * 0.4)
+            ];
+            this.thrustGraphics.fillPoints(innerPoints, true);
+        }
     }
 
     private handleInput(dt: number) {
@@ -176,25 +212,29 @@ class GameScene extends Phaser.Scene {
 
     private applyPhysics(dt: number) {
         const currentSpeed = this.velocity.length();
-        let thrustPower = this.baseAcceleration;
         
         if (this.throttle > 0) {
-            thrustPower *= (1 + currentSpeed / 200);
+            let thrustPower = this.baseAcceleration * (1 + currentSpeed / 200);
             
             // Soft cap at 900,000
             if (currentSpeed > 900000) {
                 const softCapFactor = Math.max(0, 1 - (currentSpeed - 900000) / 100000);
-                thrustPower *= (0.01 + softCapFactor * 0.99); // Slow down significantly but keep a tiny bit
+                thrustPower *= (0.01 + softCapFactor * 0.99);
             }
+
+            const thrustDir = new Phaser.Math.Vector2(Math.cos(this.ship.rotation), Math.sin(this.ship.rotation));
+            const acceleration = thrustDir.scale(thrustPower * this.throttle * dt);
+            this.velocity.add(acceleration);
         } else if (this.throttle < 0) {
-            thrustPower *= 0.6;
+            // Breaking reduces current speed until it hits zero, then stops.
+            // Increased braking force (2.0 instead of 0.6) for better responsiveness.
+            const brakeForce = this.baseAcceleration * 2.0 * Math.abs(this.throttle) * dt;
+            if (currentSpeed > brakeForce) {
+                this.velocity.setLength(currentSpeed - brakeForce);
+            } else {
+                this.velocity.set(0, 0);
+            }
         }
-        
-        const accelerationMag = thrustPower * this.throttle;
-        const thrustDir = new Phaser.Math.Vector2(Math.cos(this.ship.rotation), Math.sin(this.ship.rotation));
-        const acceleration = thrustDir.scale(accelerationMag * dt);
-        
-        this.velocity.add(acceleration);
 
         // Hard cap at 1,000,000
         if (this.velocity.length() > 1000000) {
@@ -212,12 +252,12 @@ class GameScene extends Phaser.Scene {
         const targetZoom = Math.max(1.0 / (1 + speed / 350), 0.05);
         this.cameras.main.setZoom(Phaser.Math.Linear(this.cameras.main.zoom, targetZoom, 0.05 * dt));
         
-        // Update stars tile position and size
+        // Update stars tile position based on camera scroll
         const cam = this.cameras.main;
         this.stars.forEach(layer => {
+            // stars are on uiCamera (scrollFactor 0), so we just update tilePosition
             layer.sprite.setTilePosition(cam.scrollX * layer.factor, cam.scrollY * layer.factor);
-            layer.sprite.setSize(window.innerWidth / cam.zoom, window.innerHeight / cam.zoom);
-            layer.sprite.setScale(1 / cam.zoom);
+            layer.sprite.setSize(window.innerWidth, window.innerHeight);
         });
 
         this.uiCamera.setSize(window.innerWidth, window.innerHeight);
@@ -242,6 +282,12 @@ class GameScene extends Phaser.Scene {
             const arrowX = this.ship.x + Math.cos(angle) * (visualRadius / zoom);
             const arrowY = this.ship.y + Math.sin(angle) * (visualRadius / zoom);
             
+            // Bind pointerDistText to navArrow (calculated in screen space)
+            const screenX = window.innerWidth / 2 + Math.cos(angle) * visualRadius;
+            const screenY = window.innerHeight / 2 + Math.sin(angle) * visualRadius;
+            this.pointerDistText.setPosition(screenX, screenY);
+            this.pointerDistText.setText(`${dist}`);
+
             const arrowSize = 12 / zoom;
             this.navArrow.lineStyle(3 / zoom, 0x000000, 0.8);
             this.navArrow.strokeTriangle(
@@ -253,6 +299,8 @@ class GameScene extends Phaser.Scene {
             if (dist < 500 && speed < 60) {
                 this.distText.setText(`TARGET: ${stationLabel.text}\nDISTANCE: ${dist}\n[ DOCKING AVAILABLE ]`);
             }
+        } else {
+            this.pointerDistText.setText('');
         }
         this.hintText.setY(window.innerHeight - 50);
     }
