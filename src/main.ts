@@ -327,13 +327,13 @@ class GameScene extends Phaser.Scene {
 
         const zoom = this.cameras.main.zoom;
 
-        // Ship scales with zoom – shrinks when zoomed out, minimum ~8px on screen
+        // Manual zoom: ship is a pure world object — camera zoom shrinks/grows it
+        // exactly like every other world object. Scale stays 1.
+        // Auto zoom: enforce a tiny minimum so ship never disappears at extreme speed.
         if (this.manualZoom !== null) {
-            // In manual mode the ship gets smaller proportionally, floored at 8px
-            this.ship.setScale(Math.max(8 / (SHIP_SIZE * zoom), 1 / zoom));
+            this.ship.setScale(1);
         } else {
-            // Auto mode: held readable
-            this.ship.setScale(Math.max(1, 15 / (SHIP_SIZE * zoom)));
+            this.ship.setScale(Math.max(1, 8 / (SHIP_SIZE * zoom)));
         }
 
         const cam = this.cameras.main;
@@ -557,9 +557,19 @@ class LandingScene extends Phaser.Scene {
     }
 
     private hashStr(s: string): number {
-        let h = 0;
-        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-        return h;
+        // Use a stronger mix so that sequential station names (SECTOR 1, SECTOR 2 …)
+        // hash to well-spread values across mod 3.
+        let h = 2166136261;   // FNV-1a 32-bit offset basis
+        for (let i = 0; i < s.length; i++) {
+            h ^= s.charCodeAt(i);
+            h = Math.imul(h, 16777619);   // FNV prime
+            h >>>= 0;
+        }
+        // Extra avalanche pass so even 1-digit differences produce different mod-3
+        h ^= h >>> 16;
+        h = Math.imul(h, 0x45d9f3b);
+        h ^= h >>> 16;
+        return h >>> 0;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -818,10 +828,19 @@ class LandingScene extends Phaser.Scene {
     //  SHIP
     // ─────────────────────────────────────────────────────────────────────────
     private createShip() {
-        const spawnX = (this.hangar.entryLeft + this.hangar.entryRight) / 2;
-        const spawnY = this.hangar.entryTop - 30;
-        this.ship    = this.add.container(spawnX, spawnY);
-        const sg     = this.add.graphics();
+        const h = this.hangar;
+        let spawnX: number, spawnY: number;
+        if (h.type === 'bunker') {
+            // Open top — spawn centred above the pit, well above ceilingY
+            spawnX = (h.left + h.right) / 2;
+            spawnY = h.ceilingY - 50;
+        } else {
+            // surface / shaft — spawn centred on the entry gap, above it
+            spawnX = (h.entryLeft + h.entryRight) / 2;
+            spawnY = h.entryTop - 40;
+        }
+        this.ship = this.add.container(spawnX, spawnY);
+        const sg  = this.add.graphics();
         this.drawLanderGraphic(sg);
         this.ship.add(sg);
         this.thrustGraphics = this.add.graphics();
@@ -883,13 +902,28 @@ class LandingScene extends Phaser.Scene {
         const shipBot   = this.ship.y + this.SHIP_BOTTOM;
         const shipLeft  = this.ship.x - this.SHIP_HALF_W;
         const shipRight = this.ship.x + this.SHIP_HALF_W;
-        const inChamber = this.ship.x > h.left && this.ship.x < h.right && this.ship.y >= h.ceilingY;
+
+        // Bunker is open-top: ship is "in chamber" as soon as it crosses the horizontal bounds,
+        // regardless of vertical position.  Surface/shaft use the ceilingY threshold.
+        const inChamber = this.ship.x > h.left && this.ship.x < h.right && (
+            h.type === 'bunker'
+                ? this.ship.y >= h.ceilingY - 10   // small grace zone so fall-in is clean
+                : this.ship.y >= h.ceilingY
+        );
         const inShaft   = h.type === 'shaft'
             && this.ship.x > h.entryLeft && this.ship.x < h.entryRight
             && this.ship.y < h.ceilingY;
 
         // ── CEILING ──
-        if ((inChamber || inShaft) && shipTop <= h.ceilingY && this.ship.y > h.ceilingY - 60) {
+        // Bunker is fully open at the top — no ceiling collision at all.
+        // Surface has a roof with a gap: only collide where the roof actually exists.
+        // Shaft: ceiling is the bottom of the shaft tunnel (transition into the chamber).
+        const hasCeiling = (
+            (h.type === 'surface' && inChamber &&
+             (this.ship.x < h.entryLeft || this.ship.x > h.entryRight)) ||
+            (h.type === 'shaft' && inShaft)
+        );
+        if (hasCeiling && shipTop <= h.ceilingY && this.ship.y > h.ceilingY - 60) {
             const spd = Math.abs(this.velocity.y);
             this.ship.y = h.ceilingY - this.SHIP_TOP;
             if (spd > this.CEILING_CRASH_SPEED) { this.onCrash(); return; }
